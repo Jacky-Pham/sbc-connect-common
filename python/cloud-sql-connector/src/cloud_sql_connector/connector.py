@@ -150,6 +150,14 @@ def setup_search_path_event_listener(engine, schema):
 def setup_pg8000_close_event_listener(engine):
     """Set up an event listener to wrap dbapi connection close() to suppress pg8000 errors during Cloud Run scale-down.
 
+    Closing a connection whose underlying socket is already dead (e.g. the Cloud SQL Auth
+    Proxy sidecar was torn down first during Cloud Run scale-down, or the connection was
+    otherwise dropped) can raise different exception types depending on exactly how and when
+    the socket died - pg8000 has been observed to raise ``InterfaceError``, ``OSError``, and
+    ``ValueError`` ("write to closed file") for what is functionally the same situation. Since
+    the connection is being discarded either way, any exception raised while closing it is safe
+    to log and swallow here.
+
     Args:
         engine: The SQLAlchemy engine object
     """
@@ -157,11 +165,6 @@ def setup_pg8000_close_event_listener(engine):
         return
 
     import logging
-
-    try:
-        from pg8000.exceptions import InterfaceError
-    except ImportError:
-        InterfaceError = None
 
     @event.listens_for(engine, "connect")
     def on_connect(dbapi_conn, _connection_record):
@@ -171,11 +174,10 @@ def setup_pg8000_close_event_listener(engine):
             try:
                 original_close()
             except Exception as e:
-                if InterfaceError and isinstance(e, InterfaceError):
-                    logging.getLogger(__name__).debug(
-                        "Suppressed pg8000 InterfaceError on connection close during teardown."
-                    )
-                else:
-                    raise
+                logging.getLogger(__name__).debug(
+                    "Suppressed %s while closing pg8000 connection during teardown: %s",
+                    type(e).__name__,
+                    e,
+                )
 
         dbapi_conn.close = safe_close
