@@ -18,6 +18,7 @@ import threading
 import time
 from dataclasses import dataclass
 from typing import Mapping
+from urllib.parse import quote
 
 from google.cloud.sql.connector import Connector
 from sqlalchemy import event
@@ -85,8 +86,8 @@ def database_uri_from_env(
 ) -> str:
     """Build a local pg8000 SQLAlchemy URI from environment variables."""
     values = env if env is not None else os.environ
-    db_user = values.get(username_env, "")
-    db_password = values.get(password_env, "")
+    db_user = quote(values.get(username_env, ""), safe="")
+    db_password = quote(values.get(password_env, ""), safe="")
     db_name = values.get(name_env, "")
     db_host = values.get(host_env, "")
     db_port = values.get(port_env, "5432")

@@ -17,6 +17,7 @@ import sys
 from unittest.mock import MagicMock, Mock, call, patch
 
 import pytest
+from sqlalchemy import create_engine
 
 from cloud_sql_connector.connector import (
     DBConfig,
@@ -63,6 +64,43 @@ class TestDBConfig:
 
 class TestEnvironmentSettings:
     """Test SQLAlchemy configuration derived from environment values."""
+
+    @pytest.mark.parametrize("use_socket", [False, True], ids=["tcp", "unix"])
+    @pytest.mark.parametrize(
+        "username,password",
+        [
+            ("user", "password"),
+            ("user", "synthetic@pw"),
+            ("user", "synthetic%40pw"),
+            ("user:name@example.com", "synthetic:/?#[]%+ pw"),
+        ],
+    )
+    def test_local_credentials_reach_driver_unchanged(
+        self, use_socket, username, password
+    ):
+        """Preserve literal credentials through SQLAlchemy URI parsing."""
+        values = {
+            "DATABASE_USERNAME": username,
+            "DATABASE_PASSWORD": password,
+            "DATABASE_NAME": "database",
+            "DATABASE_HOST": "localhost",
+            "DATABASE_PORT": "5433",
+        }
+        expected = {"user": username, "password": password, "database": "database"}
+        if use_socket:
+            values["DATABASE_UNIX_SOCKET"] = "/tmp/synthetic-socket"
+            expected["unix_sock"] = "/tmp/synthetic-socket/.s.PGSQL.5432"
+        else:
+            expected.update(host="localhost", port=5433)
+
+        uri, engine_options = sqlalchemy_settings_from_env(values)
+        assert uri == database_uri_from_env(values)
+        engine = create_engine(uri, **engine_options)
+        try:
+            _, actual = engine.dialect.create_connect_args(engine.url)
+            assert actual == expected
+        finally:
+            engine.dispose()
 
     def test_database_uri(self):
         """Build a TCP URI for local development."""
